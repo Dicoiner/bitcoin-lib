@@ -6,7 +6,6 @@ import fr.acinq.bitcoin._
 import org.json4s.JsonAST.{JArray, JDouble, JString}
 import org.json4s.jackson.JsonMethods
 import org.json4s.{DefaultFormats, JValue}
-import org.junit.runner.RunWith
 import org.scalatest.FunSuite
 import org.scalatest.junit.JUnitRunner
 
@@ -65,7 +64,8 @@ object ScriptSpec {
     "CHECKLOCKTIMEVERIFY" -> SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY,
     "CHECKSEQUENCEVERIFY" -> SCRIPT_VERIFY_CHECKSEQUENCEVERIFY,
     "WITNESS" -> SCRIPT_VERIFY_WITNESS,
-    "WITNESS_PUBKEYTYPE" -> SCRIPT_VERIFY_WITNESS_PUBKEYTYPE
+    "WITNESS_PUBKEYTYPE" -> SCRIPT_VERIFY_WITNESS_PUBKEYTYPE,
+    "CONST_SCRIPTCODE" -> SCRIPT_VERIFY_CONST_SCRIPTCODE
   )
 
   def parseScriptFlags(strFlags: String): Int = if (strFlags.isEmpty) 0 else strFlags.split(",").map(mapFlagNames(_)).foldLeft(0)(_ | _)
@@ -140,7 +140,6 @@ object ScriptSpec {
   }
 }
 
-@RunWith(classOf[JUnitRunner])
 class ScriptSpec extends FunSuite {
   test("reference client script tests") {
     val stream = classOf[ScriptSpec].getResourceAsStream("/data/script_tests.json")

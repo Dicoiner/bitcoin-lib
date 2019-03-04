@@ -37,6 +37,49 @@ object BlockHeader extends BtcSerializer[BlockHeader] {
       BigInteger.valueOf(nword).shiftLeft(8 * (nsize.toInt - 3))
     if (isneg != 0) result.negate() else result
   }
+
+  /**
+    *
+    * @param bits difficulty target
+    * @return the amount of work represented by this difficulty target, as displayed
+    *         by bitcoin core
+    */
+  def blockProof(bits: Long): Double = {
+    val (target, negative, overflow) = decodeCompact(bits)
+    if (target == BigInteger.ZERO || negative || overflow) 0.0 else {
+      val work = BigInteger.valueOf(2).pow(256).divide(target.add(BigInteger.ONE))
+      work.doubleValue()
+    }
+  }
+
+  def blockProof(header: BlockHeader): Double = blockProof(header.bits)
+
+  /**
+    * Proof of work: hash(header) <= target difficulty
+    *
+    * @param header block header
+    * @return true if the input block header validates its expected proof of work
+    */
+  def checkProofOfWork(header: BlockHeader): Boolean = {
+    val (target, _, _) = decodeCompact(header.bits)
+    val hash = new BigInteger(1, header.blockId.toArray)
+    hash.compareTo(target) <= 0
+  }
+
+  def calculateNextWorkRequired(lastHeader: BlockHeader, lastRetargetTime: Long): Long = {
+    var actualTimespan = lastHeader.time - lastRetargetTime
+    val targetTimespan = 14 * 24 * 60 * 60 // two weeks
+    if (actualTimespan < targetTimespan / 4) actualTimespan = targetTimespan / 4
+    if (actualTimespan > targetTimespan * 4) actualTimespan = targetTimespan * 4
+
+    var (target, false, false) = decodeCompact(lastHeader.bits)
+    target = target.multiply(BigInteger.valueOf(actualTimespan))
+    target = target.divide(BigInteger.valueOf(targetTimespan))
+
+    val powLimit = new BigInteger(1, BinaryData("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"))
+    target = target.min(powLimit)
+    encodeCompact(target)
+  }
 }
 
 /**
@@ -52,7 +95,13 @@ object BlockHeader extends BtcSerializer[BlockHeader] {
 case class BlockHeader(version: Long, hashPreviousBlock: BinaryData, hashMerkleRoot: BinaryData, time: Long, bits: Long, nonce: Long) extends BtcSerializable[BlockHeader] {
   require(hashPreviousBlock.length == 32, "hashPreviousBlock must be 32 bytes")
   require(hashMerkleRoot.length == 32, "hashMerkleRoot must be 32 bytes")
+
   lazy val hash: BinaryData = Crypto.hash256(BlockHeader.write(this))
+
+  // hash is reversed here (same as tx id)
+  lazy val blockId = BinaryData(hash.reverse)
+
+  def blockProof = BlockHeader.blockProof(this)
 
   override def serializer: BtcSerializer[BlockHeader] = BlockHeader
 }
@@ -73,8 +122,10 @@ object Block extends BtcSerializer[Block] {
     BlockHeader.validate(input.header)
     require(util.Arrays.equals(input.header.hashMerkleRoot, MerkleTree.computeRoot(input.tx.map(_.hash))), "invalid block:  merkle root mismatch")
     require(input.tx.map(_.txid).toSet.size == input.tx.size, "invalid block: duplicate transactions")
-    input.tx.map(Transaction.validate)
+    input.tx.foreach(Transaction.validate)
   }
+
+  def blockProof(block: Block): Double = BlockHeader.blockProof(block.header)
 
   // genesis blocks
   val LivenetGenesisBlock = {
@@ -102,18 +153,14 @@ object Block extends BtcSerializer[Block] {
     * @param block
     * @return true if the input block validates its expected proof of work
     */
-  def checkProofOfWork(block: Block): Boolean = {
-    val (target, _, _) = decodeCompact(block.header.bits)
-    val hash = new BigInteger(1, block.blockId.toArray)
-    hash.compareTo(target) <= 0
-  }
+  def checkProofOfWork(block: Block): Boolean = BlockHeader.checkProofOfWork(block.header)
 
   /**
     *
     * @param tx coinbase transaction
     * @return the witness reserved value included in the input of this tx if any
     */
-  def witnessReservedValue(tx: Transaction) : Option[BinaryData] = tx.txIn(0).witness match {
+  def witnessReservedValue(tx: Transaction): Option[BinaryData] = tx.txIn(0).witness match {
     case ScriptWitness(Seq(nonce)) if nonce.length == 32 => Some(nonce)
     case _ => None
   }
@@ -131,11 +178,12 @@ object Block extends BtcSerializer[Block] {
 
   /**
     * Checks the witness commitment of a block
+    *
     * @param block block
     * @return true if the witness commitment for this block is valid, or if this block does not contain a witness commitment
     *         nor any segwit transactions.
     */
-  def checkWitnessCommitment(block: Block) : Boolean = {
+  def checkWitnessCommitment(block: Block): Boolean = {
     val coinbase = block.tx.head
     (witnessReservedValue(coinbase), witnessCommitment(coinbase)) match {
       case (Some(nonce), Some(commitment)) =>
@@ -157,8 +205,7 @@ object Block extends BtcSerializer[Block] {
 case class Block(header: BlockHeader, tx: Seq[Transaction]) extends BtcSerializable[Block] {
   lazy val hash = header.hash
 
-  // hash is reversed here (same as tx id)
-  lazy val blockId = BinaryData(hash.reverse)
+  lazy val blockId = header.blockId
 
   override def serializer: BtcSerializer[Block] = Block
 }

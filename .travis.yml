@@ -1,10 +1,27 @@
 language: scala
 before_install:
- - sudo apt-get install libgmp-dev
+- wget http://mirror.ibcp.fr/pub/apache/maven/maven-3/3.5.4/binaries/apache-maven-3.5.4-bin.zip
+- unzip -qq apache-maven-3.5.4-bin.zip
+- export M2_HOME=$PWD/apache-maven-3.5.4
+- export PATH=$M2_HOME/bin:$PATH
+install:
+ # first let's build the libsecp256k1 jni lib
+ - cd secp256k1
+ - ./autogen.sh
+ - ./configure --enable-jni --enable-experimental --enable-module-ecdh
+ - make
+ - cd ..
+ # then we build the java/scala lib
+ - mvn install -DskipTests
 script: 
+ # test with bouncycastle
  - mvn test
- - LD_LIBRARY_PATH=$TRAVIS_BUILD_DIR/src/test/resources mvn test
+ # test with libsecp256k1
+ - export LD_LIBRARY_PATH=secp256k1/.libs
+ - mvn test
 scala:
-- 2.11.7
+- 2.11.11
 jdk:
 - oraclejdk8
+- openjdk11
+

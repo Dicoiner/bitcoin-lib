@@ -58,6 +58,8 @@ object Crypto {
 
     def *(that: Scalar): Scalar = multiply(that)
 
+    def isZero: Boolean = value == BigInteger.ZERO
+
     /**
       *
       * @return a 32 bytes binary representation of this value
@@ -69,7 +71,7 @@ object Crypto {
       * @return this * G where G is the curve generator
       */
     def toPoint: Point = if (Secp256k1Context.isEnabled)
-      Point(NativeSecp256k1.computePubkey(toBin))
+      Point(NativeSecp256k1.computePubkey(toBin, false))
     else
       Point(params.getG() * value)
 
@@ -141,7 +143,7 @@ object Crypto {
     def substract(point: Point): Point = Point(value.subtract(point.value))
 
     def multiply(scalar: Scalar): Point = if (Secp256k1Context.isEnabled)
-      Point(NativeSecp256k1.pubKeyTweakMul(toBin(true), scalar.toBin))
+      Point(NativeSecp256k1.pubKeyTweakMul(toBin(true), scalar.toBin, false))
     else
       Point(value.multiply(scalar.value))
 
@@ -160,7 +162,7 @@ object Crypto {
     def toBin(compressed: Boolean): BinaryData = value.getEncoded(compressed)
 
     // because ECPoint is not serializable
-    private def writeReplace: Object = PointProxy(toBin(true))
+    protected def writeReplace: Object = PointProxy(toBin(true))
 
     override def toString = toBin(true).toString
 
@@ -171,7 +173,10 @@ object Crypto {
   }
 
   object Point {
-    def apply(data: BinaryData): Point = Point(curve.getCurve.decodePoint(data))
+    def apply(data: BinaryData): Point = if (Secp256k1Context.isEnabled)
+      Point(curve.getCurve.decodePoint(NativeSecp256k1.decompress(data)))
+    else
+      Point(curve.getCurve.decodePoint(data))
   }
 
   implicit def point2ecpoint(point: Point): ECPoint = point.value
@@ -179,28 +184,36 @@ object Crypto {
   implicit def ecpoint2point(value: ECPoint): Point = Point(value)
 
   object PublicKey {
-    def apply(data: BinaryData): PublicKey = data.length match {
-      case 65 if data.head == 4 => new PublicKey(Point(data), false)
-      case 65 if data.head == 6 || data.head == 7 => new PublicKey(Point(data), false)
-      case 33 if data.head == 2 || data.head == 3 => new PublicKey(Point(data), true)
-    }
+    def apply(point: Point) = new PublicKey(point.toBin(true))
+    def apply(point: Point, compressed: Boolean) = new PublicKey(point.toBin(compressed))
   }
 
   /**
     *
-    * @param value      value of this public key (a point)
-    * @param compressed flags which specifies if the public key is compressed or uncompressed. Compressed public keys are
-    *                   encoded on 33 bytes (first byte = sign of Y, then X on 32 bytes)
+    * @param raw          serialized value of this public key (a point)
+    * @param checkValid   indicates whether or not we check that this is a valid public key; this should be used
+    *                     carefully for optimization purposes
     */
-  case class PublicKey(value: Point, compressed: Boolean = true) {
-    def toBin: BinaryData = value.toBin(compressed)
+  case class PublicKey(raw: BinaryData, checkValid: Boolean = true) {
+    // we always make this very basic check
+    require(isPubKeyValid(raw))
+    if (checkValid) {
+      // this is expensive and done only if needed
+      require(value.isInstanceOf[Point])
+    }
+
+    lazy val compressed = isPubKeyCompressed(raw)
+
+    lazy val value: Point = Point(raw)
+
+    def toBin: BinaryData = raw
 
     /**
       *
       * @return the hash160 of the binary representation of this point. This can be used to generated addresses (the address
       *         of a public key is he base58 encoding of its hash)
       */
-    def hash160: BinaryData = Crypto.hash160(toBin)
+    def hash160: BinaryData = Crypto.hash160(raw)
 
     override def toString = toBin.toString
   }
@@ -377,6 +390,12 @@ object Crypto {
     true
   }
 
+  /**
+    *
+    * @param key serialized public key
+    * @return true if the key is valid. Please not that this performs very basic tests and does not check that the
+    *         point represented by this key is actually valid.
+    */
   def isPubKeyValid(key: Seq[Byte]): Boolean = key.length match {
     case 65 if key(0) == 4 || key(0) == 6 || key(0) == 7 => true
     case 33 if key(0) == 2 || key(0) == 3 => true

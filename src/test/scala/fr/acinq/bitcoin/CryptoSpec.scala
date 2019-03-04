@@ -4,14 +4,11 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, 
 
 import fr.acinq.bitcoin.Base58.Prefix
 import fr.acinq.bitcoin.Crypto._
-import org.junit.runner.RunWith
 import org.scalatest.FlatSpec
-import org.scalatest.junit.JUnitRunner
 
 import scala.io.Source
 import scala.util.Random
 
-@RunWith(classOf[JUnitRunner])
 class CryptoSpec extends FlatSpec {
 
   "Crypto" should "import private keys" in {
@@ -45,8 +42,16 @@ class CryptoSpec extends FlatSpec {
     assert(address === "19FgFQGZy47NcGTJ4hfNdGMwS8EATqoa1X")
   }
 
+  it should "validate public key at instantiation" in {
+    intercept[Throwable] { // can be IllegalArgumentException or AssertFailException depending on whether spongycastle or libsecp256k1 is used
+      // by default we check
+      PublicKey("04" * 65)
+    }
+    // key is invalid but we don't check it
+    PublicKey("04" * 65, checkValid = false)
+  }
+
   it should "sign and verify signatures" in {
-    val random = new Random()
     val privateKey = PrivateKey.fromBase58("cRp4uUnreGMZN8vB7nQFX6XWMHU5Lc73HMAhmcDEwHfbgRS66Cqp", Base58.Prefix.SecretKeyTestnet)
     val publicKey = privateKey.publicKey
     val data = Crypto.sha256("this is a test".getBytes("UTF-8"))
